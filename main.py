@@ -7,14 +7,14 @@ import flask_socketio
 import subprocess
 import sys
 import requests
+from serial_object import Serial
 import json
-from serial import Serial
 app = Flask(__name__)
 socketio = flask_socketio.SocketIO(app)
 fireworks_launched = []
 queue = []
 run_serial_write = True
-amount_of_fireworks = 32
+amount_of_fireworks = 0
 ready_for_restart = False
 f = open('firework_profiles.json')
 firework_profiling = json.loads(f.read())
@@ -23,8 +23,6 @@ devmode = False
 if os.path.exists('devmode'):
     devmode = True
 
-if not devmode:
-    ser = Serial('/dev/ttyACM0', 115200)
 def get_theme_link(theme):
     file = None
     if theme == 'light':
@@ -89,30 +87,44 @@ def rickastley():
     if not request.remote_addr.startswith('192.168.'):
         return redirect('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
 
+def check_for_serial_devices(current_list):
+    ttys = os.listdir('/sys/class/tty')
+    device_list = []
+    for tty in ttys:
+        if tty.startswith('ttyACM') and not '/dev/{}'.format(tty) in current_list:
+            device_list.append('/dev/{}'.format(tty))
+    return device_list
+
 def firework_serial_write():
     global queue
     global queue_reset_inprogress
     global run_serial_write
     global ready_for_restart
+    global amount_of_fireworks
     print('Serial Proccessing Thread Starting...')
+    device_list = []
+    serial_list = []
     while run_serial_write:
+        if not devmode:
+            new_device_list = check_for_serial_devices(device_list)
+            for device in new_device_list:
+                serial_list.append({'obj': Serial(device, 115200), 'channels': 32, 'range': [amount_of_fireworks, amount_of_fireworks+32]})
+                amount_of_fireworks += 32
+            device_list = device_list + new_device_list
+
         try:
             i = 0
             for pin in queue:
+                firework = int(pin)-1
+                print(str(firework) + ' launched')
                 if not devmode:
-                    ser.write('/digital/{}/0\r\n'.format(pin).encode())
-                    data = ser.read()
+                    ser = None
+                    for device in serial_list:
+                        if device['range'][0] <= firework and device['range'][1] >= firework:
+                            ser = device['obj']
+                    print(ser.command('/digital/{}/0\r\n'.format(pin)))
                     time.sleep(0.5)
-                    data_left = ser.inWaiting()
-                    data += ser.read(data_left)
-                    print(data)
-                    time.sleep(0.5)
-                    ser.write('/digital/{}/1\r\n'.format(pin).encode())
-                    data = ser.read()
-                    time.sleep(0.5)
-                    data_left = ser.inWaiting()
-                    data += ser.read(data_left)
-                    print(data)
+                    print(ser.command('/digital/{}/1\r\n'.format(pin)))
                 del queue[i]
                 i = i + 1
                 print(queue)
